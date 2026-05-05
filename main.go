@@ -11,7 +11,6 @@ import (
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-
 var (
 	ideas []string
 	mu    sync.Mutex
@@ -34,24 +33,26 @@ func main() {
 	updatesR := botR.GetUpdatesChan(u)
 	updatesM := botM.GetUpdatesChan(u)
 
-	log.Println("Запущено!")
+	log.Println("--- БОТЫ ЗАПУЩЕНЫ ---")
 
 	go func() {
 		for update := range updatesR {
 			if update.Message == nil { continue }
-						if update.Message.Text == "/run" {
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Приложение:")
-				// Исправленные названия функций для версии v5
-				twaBtn := tgbotapi.InlineKeyboardButton{
-					Text: "🚀 Старт",
-					WebApp: &tgbotapi.WebAppInfo{URL: "https://js.org"},
+			if update.Message.Text == "/run" {
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "🚀 Запуск приложения:")
+				// Самый надежный способ создания кнопки WebApp
+				btn := tgbotapi.InlineKeyboardButton{
+					Text: "Открыть",
+					URL:  nil, // Оставляем пустым
 				}
+				// Добавляем WebApp через структуру напрямую (фикс для Render)
+				btn.WebApp = &tgbotapi.WebAppInfo{URL: "https://js.org"}
+				
 				msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
-					tgbotapi.NewInlineKeyboardRow(twaBtn),
+					tgbotapi.NewInlineKeyboardRow(btn),
 				)
 				botR.Send(msg)
 			}
-			
 		}
 	}()
 
@@ -62,11 +63,11 @@ func main() {
 			mu.Lock()
 			ideas = append(ideas, fmt.Sprintf("@%s: %s", m.From.UserName, m.Text))
 			mu.Unlock()
-			botM.Send(tgbotapi.NewMessage(m.Chat.ID, "✅ Записал!"))
+			botM.Send(tgbotapi.NewMessage(m.Chat.ID, "✅ Идея сохранена!"))
 		}
 		if fmt.Sprintf("%d", m.From.ID) == adminID && m.Text == "/top" {
 			mu.Lock()
-			res := "Топ-5:\n"
+			res := "📊 Топ-5 идей:\n"
 			for i, v := range ideas {
 				if i >= 5 { break }
 				res += fmt.Sprintf("%d. %s\n", i+1, v)
