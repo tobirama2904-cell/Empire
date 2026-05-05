@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -13,7 +12,7 @@ import (
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// Описываем структуру WebApp самостоятельно, чтобы не зависеть от библиотеки
+// Наши собственные структуры для TWA (чтобы не было ошибок в Render)
 type WebAppInfo struct {
 	URL string `json:"url"`
 }
@@ -84,14 +83,13 @@ func main() {
 
 	botR, _ := tgbotapi.NewBotAPI(os.Getenv("TOKEN_REALIZATOR"))
 	botM, _ := tgbotapi.NewBotAPI(os.Getenv("TOKEN_MANAGER"))
-	adminID := os.Getenv("ADMIN_ID")
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updatesR := botR.GetUpdatesChan(u)
 	updatesM := botM.GetUpdatesChan(u)
 
-	log.Println("Империя в сети! TWA через Custom Structures.")
+	log.Println("--- ИМПЕРИЯ ЗАПУЩЕНА ---")
 
 	go func() {
 		for update := range updatesM {
@@ -120,26 +118,19 @@ func main() {
 			siteURL := createGist(rawCode)
 
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "✅ Проект готов!")
-			
 			if siteURL != "" {
-				// РУЧНАЯ СБОРКА КНОПКИ (БЕЗ ИСПОЛЬЗОВАНИЯ ТИПОВ БИБЛИОТЕКИ)
 				btn := InlineKeyboardButtonWebApp{
 					Text:   "🌐 Открыть (TWA)",
 					WebApp: WebAppInfo{URL: siteURL},
 				}
-				
-				// Превращаем нашу кнопку в JSON, который поймет библиотека
 				keyboardJSON, _ := json.Marshal(map[string]interface{}{
 					"inline_keyboard": [][]InlineKeyboardButtonWebApp{{btn}},
 				})
-				
 				var markup tgbotapi.InlineKeyboardMarkup
 				json.Unmarshal(keyboardJSON, &markup)
-				
 				msg.ReplyMarkup = markup
 			}
 			botR.Send(msg)
-			log.Printf("Запрос от %s обработан. AdminID: %s", update.Message.From.UserName, adminID)
 		}
 	}
 }
