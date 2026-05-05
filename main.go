@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	tgbotapi "://github.com"
+	tgbotapi "github.com"
 )
 
 var (
