@@ -39,15 +39,19 @@ func main() {
 	go func() {
 		for update := range updatesR {
 			if update.Message == nil { continue }
-			if update.Message.Text == "/run" {
+						if update.Message.Text == "/run" {
 				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Приложение:")
+				// Исправленные названия функций для версии v5
+				twaBtn := tgbotapi.InlineKeyboardButton{
+					Text: "🚀 Старт",
+					WebApp: &tgbotapi.WebAppInfo{URL: "https://js.org"},
+				}
 				msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
-					tgbotapi.NewInlineKeyboardRow(
-						tgbotapi.NewInlineKeyboardButtonWebApp("🚀 Старт", tgbotapi.WebAppInfo{URL: "https://js.org"}),
-					),
+					tgbotapi.NewInlineKeyboardRow(twaBtn),
 				)
 				botR.Send(msg)
 			}
+			
 		}
 	}()
 
