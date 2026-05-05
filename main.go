@@ -8,8 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	tgbotapi "github.com"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
+
 
 var (
 	ideas []string
