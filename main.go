@@ -1,74 +1,139 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
+	"time"
 
-	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-var (
-	ideas []string
-	mu    sync.Mutex
-)
+// Очередь "Империя": лучшие модели от мощных к быстрым
+var modelQueue = []string{
+	"gpt-4o",              // Интеллект Principal Engineer
+	"claude-3-5-sonnet",   // Идеальный код
+	"meta-llama-3.1-405b", // Аналитика рынка
+	"meta-llama-3.1-70b",  // Скорость
+	"gpt-4o-mini",         // Резерв
+}
+
+type AIRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+}
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+func askEmpireAI(prompt string, sysPrompt string) string {
+	token := os.Getenv("GITHUB_TOKEN")
+	url := "https://azure.com"
+
+	// Если задача мелкая, экономим мощные модели
+	startIndex := 0
+	if len(prompt) < 150 && !strings.Contains(strings.ToLower(prompt), "код") {
+		startIndex = 3 
+	}
+
+	// Цикл ротации: если модель выдает ошибку, берем следующую МГНОВЕННО
+	for i := startIndex; i < len(modelQueue); i++ {
+		currentModel := modelQueue[i]
+		log.Printf("[ИМПЕРИЯ] Запрос к модели: %s", currentModel)
+
+		reqBody := AIRequest{
+			Model: currentModel,
+			Messages: []Message{
+				{Role: "system", Content: sysPrompt},
+				{Role: "user", Content: prompt},
+			},
+		}
+
+		jsonData, _ := json.Marshal(reqBody)
+		req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue // Ошибка сети -> следующая модель
+		}
+
+		if resp.StatusCode != 200 {
+			log.Printf("[ЛИМИТ] %s недоступна, меняю ИИ...", currentModel)
+			resp.Body.Close()
+			continue // Лимит исчерпан -> следующая модель моментально
+		}
+
+		var result map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+
+		if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
+			return choices.(map[string]interface{})["message"].(map[string]interface{})["content"].(string)
+		}
+	}
+	return "❌ Все ресурсы Империи на сегодня исчерпаны. Лимиты GitHub обновятся через 24 часа."
+}
 
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
-	go func() {
-		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintf(w, "OK") })
-		log.Fatal(http.ListenAndServe(":"+port, nil))
-	}()
+	go http.ListenAndServe(":"+port, nil)
 
 	botR, _ := tgbotapi.NewBotAPI(os.Getenv("TOKEN_REALIZATOR"))
 	botM, _ := tgbotapi.NewBotAPI(os.Getenv("TOKEN_MANAGER"))
 	adminID := os.Getenv("ADMIN_ID")
 
 	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
 	updatesR := botR.GetUpdatesChan(u)
 	updatesM := botM.GetUpdatesChan(u)
 
-	log.Println("Запуск без TWA для проверки...")
+	log.Println("Империя запущена на GitHub Models!")
 
+	// МЕНЕДЖЕР: Группы и Анализ
 	go func() {
-		for update := range updatesR {
+		for update := range updatesM {
 			if update.Message == nil { continue }
-			if update.Message.Text == "/run" {
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "🚀 Приложение откроется в браузере:")
+			text := update.Message.Text
+			
+			if strings.Contains(strings.ToLower(text), "идея") {
+				botM.Send(tgbotapi.NewChatAction(update.Message.Chat.ID, tgbotapi.ChatTyping))
+				sys := "Ты Principal Analyst. Дай 5 идей для заработка в IT (тренды 2026). Будь краток и конкретен."
+				res := askEmpireAI(text, sys)
+				botM.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "📊 *Анализ:* \n\n"+res))
+			}
+
+			if strings.Contains(strings.ToLower(text), "создай") || strings.Contains(strings.ToLower(text), "сделай") {
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "🛠 Запрос принят. Нажми для реализации уровня Principal.")
 				btn := tgbotapi.NewInlineKeyboardMarkup(
 					tgbotapi.NewInlineKeyboardRow(
-						tgbotapi.NewInlineKeyboardButtonURL("Открыть", "https://js.org"),
+						tgbotapi.NewInlineKeyboardButtonURL("🚀 Реализовать", "https://t.me"+botR.Self.UserName+"?start=build_"+strings.ReplaceAll(text, " ", "_")),
 					),
 				)
 				msg.ReplyMarkup = btn
-				botR.Send(msg)
+				botM.Send(msg)
 			}
 		}
 	}()
 
-	for update := range updatesM {
+	// РЕАЛИЗАТОР: Код и TWA
+	for update := range updatesR {
 		if update.Message == nil { continue }
-		m := update.Message
-		if strings.HasPrefix(strings.ToLower(m.Text), "идея") {
-			mu.Lock()
-			ideas = append(ideas, fmt.Sprintf("@%s: %s", m.From.UserName, m.Text))
-			mu.Unlock()
-			botM.Send(tgbotapi.NewMessage(m.Chat.ID, "✅ Идея сохранена!"))
-		}
-		if fmt.Sprintf("%d", m.From.ID) == adminID && m.Text == "/top" {
-			mu.Lock()
-			res := "📊 Топ-5 идей:\n"
-			for i, v := range ideas {
-				if i >= 5 { break }
-				res += fmt.Sprintf("%d. %s\n", i+1, v)
-			}
-			mu.Unlock()
-			botM.Send(tgbotapi.NewMessage(m.Chat.ID, res))
+		if strings.HasPrefix(update.Message.Text, "/start build_") {
+			task := strings.ReplaceAll(strings.TrimPrefix(update.Message.Text, "/start build_"), "_", " ")
+			botR.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "🏗 Работает Principal Engineer. Проектирую..."))
+			
+			sys := "Ты Principal Software Engineer. Выдай полный, рабочий, идеальный код. Стек выбирай сам под задачу."
+			code := askEmpireAI(task, sys)
+			
+			botR.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "✅ Проект готов:\n\n"+code))
 		}
 	}
 }
