@@ -33,15 +33,13 @@ func askEmpireAI(prompt, sys string) string {
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := (&http.Client{Timeout: 45 * time.Second}).Do(req)
 		if err != nil || resp.StatusCode != 200 {
-			if resp != nil {
-				resp.Body.Close()
-			}
+			if resp != nil { resp.Body.Close() }
 			continue
 		}
-		var res map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&res)
+		var result map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&result)
 		resp.Body.Close()
-		if choices, ok := res["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
 			choice := choices[0].(map[string]interface{})
 			msg := choice["message"].(map[string]interface{})
 			return msg["content"].(string)
@@ -58,9 +56,7 @@ func createGist(code string) string {
 	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonB))
 	req.Header.Set("Authorization", "token "+token)
 	resp, _ := (&http.Client{}).Do(req)
-	if resp == nil {
-		return ""
-	}
+	if resp == nil { return "" }
 	defer resp.Body.Close()
 	var res map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&res)
@@ -72,9 +68,7 @@ func createGist(code string) string {
 
 func main() {
 	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
+	if port == "" { port = "8080" }
 	go http.ListenAndServe(":"+port, nil)
 
 	botR, _ := tgbotapi.NewBotAPI(os.Getenv("TOKEN_REALIZATOR"))
@@ -86,13 +80,11 @@ func main() {
 	updatesR := botR.GetUpdatesChan(u)
 	updatesM := botM.GetUpdatesChan(u)
 
-	log.Println("Империя запущена!")
+	log.Println("Империя запущена! TWA через RAW JSON.")
 
 	go func() {
 		for update := range updatesM {
-			if update.Message == nil {
-				continue
-			}
+			if update.Message == nil { continue }
 			text := strings.ToLower(update.Message.Text)
 			if strings.Contains(text, "идея") {
 				res := askEmpireAI(text, "Ты Principal Analyst. Дай 5 идей для заработка в IT.")
@@ -108,32 +100,26 @@ func main() {
 	}()
 
 	for update := range updatesR {
-		if update.Message == nil {
-			continue
-		}
-		// Проверка лички админа
-		if update.Message.Chat.IsPrivate() && strings.HasPrefix(update.Message.Text, "/start task_") {
+		if update.Message == nil { continue }
+		if strings.HasPrefix(update.Message.Text, "/start task_") {
 			task := strings.ReplaceAll(strings.TrimPrefix(update.Message.Text, "/start task_"), "_", " ")
 			botR.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "🏗 Работает Principal Engineer..."))
 
 			rawCode := askEmpireAI(task, "Ты Principal Software Engineer. Напиши ОДИН файл HTML/CSS/JS. Только код.")
 			siteURL := createGist(rawCode)
 
+			// --- РЕАЛИЗАЦИЯ TWA ЧЕРЕЗ RAW JSON (ОБХОД ОШИБОК) ---
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "✅ Проект готов!")
-			if siteURL != "" {
-				// Универсальная кнопка WebApp для этой версии библиотеки
-				btn := tgbotapi.InlineKeyboardButton{
-					Text:   "🌐 Открыть (TWA)",
-					WebApp: &tgbotapi.WebAppInfo{URL: siteURL},
-				}
-				msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(btn))
-			}
+			
+			// Мы вручную собираем JSON для кнопки WebApp
+			keyboardJSON := fmt.Sprintf(`{"inline_keyboard":[[{"text":"🌐 Открыть (TWA)","web_app":{"url":"%s"}}]]}`, siteURL)
+			
+			var keyboard tgbotapi.InlineKeyboardMarkup
+			json.Unmarshal([]byte(keyboardJSON), &keyboard)
+			
+			msg.ReplyMarkup = keyboard
 			botR.Send(msg)
-		}
-		
-		// Использование adminID чтобы Go не ругался
-		if strings.HasPrefix(update.Message.Text, "/status") && strings.Contains(adminID, strings.Split(update.Message.Text, " ")[0]) {
-			botR.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Система 'Империя' в сети."))
+			// ---------------------------------------------------
 		}
 	}
 }
