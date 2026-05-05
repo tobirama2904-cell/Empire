@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +12,16 @@ import (
 
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
+
+// Описываем структуру WebApp самостоятельно, чтобы не зависеть от библиотеки
+type WebAppInfo struct {
+	URL string `json:"url"`
+}
+
+type InlineKeyboardButtonWebApp struct {
+	Text   string      `json:"text"`
+	WebApp WebAppInfo  `json:"web_app"`
+}
 
 var modelQueue = []string{"gpt-4o", "claude-3-5-sonnet", "meta-llama-3.1-405b", "gpt-4o-mini"}
 
@@ -36,10 +47,10 @@ func askEmpireAI(prompt, sys string) string {
 			if resp != nil { resp.Body.Close() }
 			continue
 		}
-		var result map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&result)
+		var res map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&res)
 		resp.Body.Close()
-		if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choices, ok := res["choices"].([]interface{}); ok && len(choices) > 0 {
 			choice := choices[0].(map[string]interface{})
 			msg := choice["message"].(map[string]interface{})
 			return msg["content"].(string)
@@ -80,7 +91,7 @@ func main() {
 	updatesR := botR.GetUpdatesChan(u)
 	updatesM := botM.GetUpdatesChan(u)
 
-	log.Println("Империя запущена! TWA через RAW JSON.")
+	log.Println("Империя в сети! TWA через Custom Structures.")
 
 	go func() {
 		for update := range updatesM {
@@ -108,18 +119,27 @@ func main() {
 			rawCode := askEmpireAI(task, "Ты Principal Software Engineer. Напиши ОДИН файл HTML/CSS/JS. Только код.")
 			siteURL := createGist(rawCode)
 
-			// --- РЕАЛИЗАЦИЯ TWA ЧЕРЕЗ RAW JSON (ОБХОД ОШИБОК) ---
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "✅ Проект готов!")
 			
-			// Мы вручную собираем JSON для кнопки WebApp
-			keyboardJSON := fmt.Sprintf(`{"inline_keyboard":[[{"text":"🌐 Открыть (TWA)","web_app":{"url":"%s"}}]]}`, siteURL)
-			
-			var keyboard tgbotapi.InlineKeyboardMarkup
-			json.Unmarshal([]byte(keyboardJSON), &keyboard)
-			
-			msg.ReplyMarkup = keyboard
+			if siteURL != "" {
+				// РУЧНАЯ СБОРКА КНОПКИ (БЕЗ ИСПОЛЬЗОВАНИЯ ТИПОВ БИБЛИОТЕКИ)
+				btn := InlineKeyboardButtonWebApp{
+					Text:   "🌐 Открыть (TWA)",
+					WebApp: WebAppInfo{URL: siteURL},
+				}
+				
+				// Превращаем нашу кнопку в JSON, который поймет библиотека
+				keyboardJSON, _ := json.Marshal(map[string]interface{}{
+					"inline_keyboard": [][]InlineKeyboardButtonWebApp{{btn}},
+				})
+				
+				var markup tgbotapi.InlineKeyboardMarkup
+				json.Unmarshal(keyboardJSON, &markup)
+				
+				msg.ReplyMarkup = markup
+			}
 			botR.Send(msg)
-			// ---------------------------------------------------
+			log.Printf("Запрос от %s обработан. AdminID: %s", update.Message.From.UserName, adminID)
 		}
 	}
 }
