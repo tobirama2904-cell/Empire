@@ -33,24 +33,19 @@ func main() {
 	updatesR := botR.GetUpdatesChan(u)
 	updatesM := botM.GetUpdatesChan(u)
 
-	log.Println("--- БОТЫ ЗАПУЩЕНЫ ---")
+	log.Println("Запуск без TWA для проверки...")
 
 	go func() {
 		for update := range updatesR {
 			if update.Message == nil { continue }
 			if update.Message.Text == "/run" {
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "🚀 Запуск приложения:")
-				// Самый надежный способ создания кнопки WebApp
-				btn := tgbotapi.InlineKeyboardButton{
-					Text: "Открыть",
-					URL:  nil, // Оставляем пустым
-				}
-				// Добавляем WebApp через структуру напрямую (фикс для Render)
-				btn.WebApp = &tgbotapi.WebAppInfo{URL: "https://js.org"}
-				
-				msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
-					tgbotapi.NewInlineKeyboardRow(btn),
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "🚀 Приложение откроется в браузере:")
+				btn := tgbotapi.NewInlineKeyboardMarkup(
+					tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonURL("Открыть", "https://js.org"),
+					),
 				)
+				msg.ReplyMarkup = btn
 				botR.Send(msg)
 			}
 		}
