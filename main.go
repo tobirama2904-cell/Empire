@@ -12,7 +12,7 @@ import (
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// Структуры для обхода ошибок TWA на Render
+// Структуры для обхода ограничений библиотеки
 type WebAppInfo struct {
 	URL string `json:"url"`
 }
@@ -40,8 +40,7 @@ func askEmpireAI(prompt, sys string) string {
 		req, _ := http.NewRequest("POST", url, bytes.NewBuffer(body))
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
-		client := &http.Client{Timeout: 60 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
 		if err != nil || resp.StatusCode != 200 {
 			if resp != nil { resp.Body.Close() }
 			continue
@@ -50,12 +49,10 @@ func askEmpireAI(prompt, sys string) string {
 		json.NewDecoder(resp.Body).Decode(&res)
 		resp.Body.Close()
 		if choices, ok := res["choices"].([]interface{}); ok && len(choices) > 0 {
-			choice := choices[0].(map[string]interface{})
-			msg := choice["message"].(map[string]interface{})
-			return msg["content"].(string)
+			return choices.(map[string]interface{})["message"].(map[string]interface{})["content"].(string)
 		}
 	}
-	return "❌ Системы перегружены. Попробуй через минуту."
+	return "⚠️ Системы перегружены. Попробуй еще раз."
 }
 
 func createGist(code string) string {
@@ -91,43 +88,48 @@ func main() {
 
 	log.Println("🔥 ИМПЕРИЯ АКТИВИРОВАНА. Уровень: Principal Engineer.")
 
-	// ЛОГИКА МЕНЕДЖЕРА (Групповой интеллект)
+	// МЕНЕДЖЕР: Групповой ИИ-мозг
 	go func() {
 		for update := range updatesM {
 			if update.Message == nil { continue }
-			t := strings.ToLower(update.Message.Text)
+			msg := update.Message
+			text := msg.Text
 
-			// Интеллектуальный анализ запроса
-			if strings.Contains(t, "идея") || strings.Contains(t, "рынок") || strings.Contains(t, "тренд") {
-				botM.Send(tgbotapi.NewChatAction(update.Message.Chat.ID, tgbotapi.ChatTyping))
-				sys := "Ты Principal Business Analyst. Проанализируй рынок IT 2026. Дай 5 конкретных идей для заработка, стек технологий и стратегию монетизации."
-				res := askEmpireAI(update.Message.Text, sys)
-				botM.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "📊 *АНАЛИЗ ИМПЕРИИ:* \n\n"+res))
-			} else if strings.Contains(t, "создай") || strings.Contains(t, "сделай") || strings.Contains(t, "напиши код") {
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "🛠 Запрос на разработку принят. Перехожу в режим проектирования уровня Staff Engineer...")
-				link := "https://t.me" + botR.Self.UserName + "?start=task_" + strings.ReplaceAll(update.Message.Text, " ", "_")
-				msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonURL("🚀 РЕАЛИЗОВАТЬ ПРОЕКТ", link)))
-				botM.Send(msg)
+			// Если в сообщении есть запрос на создание или идею
+			if len(text) > 5 {
+				botM.Send(tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping))
+				
+				// ИИ решает, что делать с сообщением
+				decisionSys := "Ты мозг системы управления. Если юзер просит идею/анализ — пиши 'ANALYZE'. Если просит создать/написать код — пиши 'CREATE'. Иначе пиши 'IGNORE'."
+				decision := askEmpireAI(text, decisionSys)
+
+				if strings.Contains(decision, "ANALYZE") {
+					sys := "Ты Principal Business Analyst. Дай глубокий анализ идеи, тренды 2026 и 5 способов заработать на этом."
+					res := askEmpireAI(text, sys)
+					botM.Send(tgbotapi.NewMessage(msg.Chat.ID, "📊 *АНАЛИЗ ИМПЕРИИ:* \n\n"+res))
+				} else if strings.Contains(decision, "CREATE") {
+					reply := tgbotapi.NewMessage(msg.Chat.ID, "🛠 Запрос на разработку уровня Staff Engineer принят. Нажми кнопку для запуска реализации.")
+					link := "https://t.me" + botR.Self.UserName + "?start=task_" + strings.ReplaceAll(text, " ", "_")
+					reply.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonURL("🚀 РЕАЛИЗОВАТЬ", link)))
+					botM.Send(reply)
+				}
 			}
 		}
 	}()
 
-	// ЛОГИКА РЕАЛИЗАТОРА (Кодинг и деплой)
+	// РЕАЛИЗАТОР: Код и деплой
 	for update := range updatesR {
 		if update.Message == nil { continue }
 		if strings.HasPrefix(update.Message.Text, "/start task_") {
 			task := strings.ReplaceAll(strings.TrimPrefix(update.Message.Text, "/start task_"), "_", " ")
-			botR.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "🏗 Работает Principal Engineer. Генерирую архитектуру и чистый код..."))
+			botR.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "🏗 Работает Principal Engineer. Проектирую идеальную архитектуру..."))
 
-			sys := "Ты Staff Software Engineer. Напиши ПОЛНОСТЬЮ готовый к использованию код (HTML/JS/CSS или Backend). Код должен быть идеальным, современным и рабочим на 100%."
-			rawCode := askEmpireAI("Задача: "+task, sys)
+			sys := "Ты Staff Software Engineer. Напиши ПОЛНОСТЬЮ готовый ОДИН файл HTML/CSS/JS. Код должен быть современным, функциональным и без багов."
+			code := askEmpireAI(task, sys)
 			
-			// Самопроверка кода
-			finalCode := askEmpireAI(rawCode, "Ты Senior QA. Исправь любые ошибки в этом коде и верни только чистый исправленный код.")
-			
-			siteURL := createGist(finalCode)
+			siteURL := createGist(code)
 
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "✅ ПРОЕКТ РЕАЛИЗОВАН И ПРОВЕРЕН.")
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "✅ ПРОЕКТ РЕАЛИЗОВАН.")
 			if siteURL != "" {
 				btn := InlineKeyboardButtonWebApp{Text: "🌐 ЗАПУСТИТЬ (TWA)", WebApp: WebAppInfo{URL: siteURL}}
 				kbJSON, _ := json.Marshal(map[string]interface{}{"inline_keyboard": [][]InlineKeyboardButtonWebApp{{btn}}})
@@ -136,7 +138,7 @@ func main() {
 				msg.ReplyMarkup = markup
 			}
 			botR.Send(msg)
-			botR.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "📦 *Исходный код:* \n```html\n"+finalCode+"\n```"))
+			botR.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "📦 *Исходный код:* \n```html\n"+code+"\n```"))
 		}
 	}
 }
