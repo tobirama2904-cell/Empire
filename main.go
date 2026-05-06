@@ -21,35 +21,29 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-const (
-	GH_URL   = "https://azure.com"
-	GROQ_URL = "https://groq.com"
-)
+const GROQ_URL = "https://groq.com"
 
-func askAI(prompt, sys string) string {
-	groqKey := os.Getenv("GROQ_KEY")
-	ghTokens := strings.Split(os.Getenv("GITHUB_TOKENS"), ",")
+// ФУНКЦИЯ ОХОТНИК: Мгновенно находит живой ключ из твоего списка
+func hunterAsk(prompt, sys string) string {
+	keys := strings.Split(os.Getenv("GROQ_KEYS"), ",")
+	
+	// Охотник тестирует ключи без задержек
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" { continue }
 
-	// 1. Пробуем Groq (приоритет на скорость)
-	if groqKey != "" {
-		log.Println("--- Пробую Groq ---")
-		res := callAPI(GROQ_URL, groqKey, "llama-3.1-70b-versatile", sys, prompt)
-		if res != "" { return res }
+		// Список моделей от мощных к быстрым
+		models := []string{"llama-3.3-70b-specdec", "llama-3.3-70b-versatile", "llama3-70b-8192"}
+		
+		for _, m := range models {
+			res := callGroq(key, m, sys, prompt)
+			if res != "" { return res }
+		}
 	}
-
-	// 2. Пробуем GitHub (резерв)
-	for _, token := range ghTokens {
-		token = strings.TrimSpace(token)
-		if token == "" { continue }
-		log.Println("--- Пробую GitHub ---")
-		res := callAPI(GH_URL, token, "gpt-4o", sys, prompt)
-		if res != "" { return res }
-	}
-
-	return "❌ Не удалось получить ответ от ИИ. Проверь ключи в настройках!"
+	return "⚡️ Все каналы перегружены. Попробуй еще раз."
 }
 
-func callAPI(apiURL, key, model, sys, prompt string) string {
+func callGroq(key, model, sys, prompt string) string {
 	payload := AIRequest{
 		Model: model,
 		Messages: []Message{
@@ -58,49 +52,32 @@ func callAPI(apiURL, key, model, sys, prompt string) string {
 		},
 	}
 	body, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", apiURL, bytes.NewBuffer(body))
+	req, _ := http.NewRequest("POST", GROQ_URL, bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 25 * time.Second}
+	// Ультра-быстрый таймаут для охотника
+	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Ошибка сети: %v", err)
+	if err != nil || resp.StatusCode != 200 {
 		return ""
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("API Error: статус %d (проверь ключ)", resp.StatusCode)
-		return ""
-	}
-
 	var data struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
+		Choices []struct{ Message struct{ Content string } } `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		log.Printf("Ошибка декодирования: %v", err)
-		return ""
-	}
-
+	json.NewDecoder(resp.Body).Decode(&data)
 	if len(data.Choices) > 0 {
 		return data.Choices[0].Message.Content
 	}
 	return ""
 }
 
-func runBot(token, roleName, systemPrompt string) {
+func runBot(token, role, systemPrompt string) {
 	bot, err := tgbotapi.NewBotAPI(token)
-	if err != nil {
-		log.Printf("[%s] Ошибка авторизации: %v", roleName, err)
-		return
-	}
-	log.Printf("[%s] Запущен: @%s", roleName, bot.Self.UserName)
-
+	if err != nil { return }
+	
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updates := bot.GetUpdatesChan(u)
@@ -109,10 +86,7 @@ func runBot(token, roleName, systemPrompt string) {
 		if update.Message == nil { continue }
 		go func(m *tgbotapi.Message) {
 			bot.Send(tgbotapi.NewChatAction(m.Chat.ID, "typing"))
-			log.Printf("[%s] Сообщение от %s: %s", roleName, m.From.UserName, m.Text)
-			
-			ans := askAI(m.Text, systemPrompt)
-			
+			ans := hunterAsk(m.Text, systemPrompt)
 			msg := tgbotapi.NewMessage(m.Chat.ID, ans)
 			msg.ParseMode = "Markdown"
 			bot.Send(msg)
@@ -121,16 +95,14 @@ func runBot(token, roleName, systemPrompt string) {
 }
 
 func main() {
-	// Ждем 5 секунд, чтобы Render не ругался на порты сразу
-	time.Sleep(5 * time.Second)
-	
+	// Чтобы Render не убивал процесс, даем ему "фиктивный" старт
+	go func() {
+		http.ListenAndServe(":"+os.Getenv("PORT"), nil)
+	}()
+
 	t1 := os.Getenv("TOKEN_MANAGER")
 	t2 := os.Getenv("TOKEN_REALIZATOR")
 
-	if t1 == "" || t2 == "" {
-		log.Fatal("Критическая ошибка: TOKEN_MANAGER или TOKEN_REALIZATOR пусты!")
-	}
-
-	go runBot(t1, "МЕНЕДЖЕР", "Ты Менеджер. Следи за порядком.")
-	runBot(t2, "РЕАЛИЗАТОР", "Ты Реализатор. Твори код и сайты.")
+	go runBot(t1, "Manager", "Ты Менеджер. Управляй системой.")
+	runBot(t2, "Realizator", "Ты Реализатор. Твори код и проекты.")
 }
