@@ -13,6 +13,7 @@ import (
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+// Структуры для общения с нейросетями
 type AIRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
@@ -22,137 +23,108 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+// Провайдеры ИИ (правильные адреса)
+const (
+	GH_URL   = "https://azure.com"
+	GROQ_URL = "https://groq.com"
+)
+
+// Функция автоматического выбора живого ИИ
 func askUltimateAI(prompt, sys string) string {
+	// Собираем все ключи из настроек сервера
 	ghTokens := strings.Split(os.Getenv("GITHUB_TOKENS"), ",")
 	groqKey := os.Getenv("GROQ_KEY")
-	hfToken := os.Getenv("HF_TOKEN")
 
-	// 1. Пытаемся GitHub (мощный код)
+	// 1. Пробуем GitHub (перебираем все токены, если их много)
 	for _, token := range ghTokens {
 		token = strings.TrimSpace(token)
 		if token == "" { continue }
-		models := []string{"gpt-4o", "claude-3-5-sonnet", "meta-llama-3.1-70b"}
+		
+		// Список бесплатных моделей на GitHub
+		models := []string{"gpt-4o", "meta-llama-3.1-70b", "mistral-large-2407"}
 		for _, m := range models {
-			res := callAPI("https://azure.com", token, m, sys, prompt)
-			if res != "" { return res }
+			res := callAPI(GH_URL, token, m, sys, prompt)
+			if res != "" { return res } // Если ответил — возвращаем результат
 		}
 	}
 
-	// 2. Пытаемся Groq (скорость)
+	// 2. Если GitHub не ответил, пробуем Groq (самый быстрый)
 	if groqKey != "" {
-		res := callAPI("https://groq.com", groqKey, "llama-3.1-70b-versatile", sys, prompt)
+		res := callAPI(GROQ_URL, groqKey, "llama-3.1-70b-versatile", sys, prompt)
 		if res != "" { return res }
 	}
 
-	// 3. Резерв Hugging Face
-	if hfToken != "" {
-		res := callAPI("https://huggingface.co", hfToken, "mistral", sys, prompt)
-		if res != "" { return res }
-	}
-
-	return "🚀 Все линии связи заняты. Империя расширяет лимиты... Попробуй через 60 секунд."
+	return "🚀 Все линии связи заняты. Попробуй через минуту!"
 }
 
+// Универсальный вызов API
 func callAPI(apiURL, key, model, sys, prompt string) string {
-	body, _ := json.Marshal(AIRequest{Model: model, Messages: []Message{
-		{Role: "system", Content: sys},
-		{Role: "user", Content: prompt},
-	}})
+	payload := AIRequest{
+		Model: model,
+		Messages: []Message{
+			{Role: "system", Content: sys},
+			{Role: "user", Content: prompt},
+		},
+	}
+	
+	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", apiURL, bytes.NewBuffer(body))
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	
-	client := &http.Client{Timeout: 25 * time.Second}
+	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != 200 {
-		if resp != nil { resp.Body.Close() }
+	
+	// Если ошибка (лимит, неверный ключ и т.д.), возвращаем пусто
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return "" 
+	}
+	defer resp.Body.Close()
+
+	var data struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil || len(data.Choices) == 0 {
 		return ""
 	}
-	defer resp.Body.Close()
-
-	var data map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&data)
-
-	// ИСПРАВЛЕННЫЙ ВЫВОД (решает ошибку choices)
-	if choices, ok := data["choices"].([]interface{}); ok && len(choices) > 0 {
-		if firstChoice, ok := choices[0].(map[string]interface{}); ok {
-			if msg, ok := firstChoice["message"].(map[string]interface{}); ok {
-				return msg["content"].(string)
-			}
-		}
-	}
-	return ""
-}
-
-func createGist(code string) string {
-	tokens := strings.Split(os.Getenv("GITHUB_TOKENS"), ",")
-	token := strings.TrimSpace(tokens[0])
-	body := map[string]interface{}{"public": true, "files": map[string]interface{}{"index.html": map[string]string{"content": code}}}
-	jsonB, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", "https://github.com", bytes.NewBuffer(jsonB))
-	req.Header.Set("Authorization", "token "+token)
-	resp, _ := (&http.Client{}).Do(req)
-	if resp == nil { return "" }
-	defer resp.Body.Close()
-	var res map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&res)
-	if raw, ok := res["html_url"].(string); ok {
-		return "https://github.io?" + raw
-	}
-	return ""
+	return data.Choices[0].Message.Content
 }
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" { port = "8080" }
-	go http.ListenAndServe(":"+port, nil)
+	// Берем токен Телеграм из настроек
+	botToken := os.Getenv("TELEGRAM_APITOKEN")
+	if botToken == "" {
+		log.Panic("Ошибка: Не указан TELEGRAM_APITOKEN")
+	}
 
-	botR, _ := tgbotapi.NewBotAPI(os.Getenv("TOKEN_REALIZATOR"))
-	botM, _ := tgbotapi.NewBotAPI(os.Getenv("TOKEN_MANAGER"))
+	bot, err := tgbotapi.NewBotAPI(botToken)
+	if err != nil {
+		log.Panic(err)
+	}
 
-	updatesR := botR.GetUpdatesChan(tgbotapi.NewUpdate(0))
-	updatesM := botM.GetUpdatesChan(tgbotapi.NewUpdate(0))
+	log.Printf("Бот запущен под аккаунтом %s", bot.Self.UserName)
 
-	log.Println("⚡️ ИМПЕРИЯ: ТИТАН ЗАПУЩЕН")
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
+	updates := bot.GetUpdatesChan(u)
 
-	go func() {
-		for update := range updatesM {
-			if update.Message == nil { continue }
-			t := strings.ToLower(update.Message.Text)
-			if strings.Contains(t, "идея") || strings.Contains(t, "рынок") {
-				botM.Send(tgbotapi.NewChatAction(update.Message.Chat.ID, tgbotapi.ChatTyping))
-				res := askUltimateAI(t, "Ты Principal Global Analyst. Дай 5 идей на миллион.")
-				botM.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "📊 *АНАЛИЗ ИМПЕРИИ:* \n\n"+res))
-			}
-			if strings.Contains(t, "создай") || strings.Contains(t, "сделай") {
-				link := "https://t.me" + botR.Self.UserName + "?start=task_" + strings.ReplaceAll(t, " ", "_")
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "🛠 Запрос принят. Жми кнопку!")
-				msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonURL("🚀 РЕАЛИЗОВАТЬ", link)))
-				botM.Send(msg)
-			}
-		}
-	}()
-
-	for update := range updatesR {
+	for update := range updates {
 		if update.Message == nil { continue }
-		if strings.HasPrefix(update.Message.Text, "/start task_") {
-			task := strings.ReplaceAll(strings.TrimPrefix(update.Message.Text, "/start task_"), "_", " ")
-			botR.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "🏗 Работает Principal Engineer..."))
+		
+		// Отвечаем в отдельном потоке (горутине), чтобы бот не тормозил
+		go func(m *tgbotapi.Message) {
+			// Отправляем статус "печатает..."
+			bot.Send(tgbotapi.NewChatAction(m.Chat.ID, tgbotapi.ChatActionTyping))
 			
-			code := askUltimateAI(task, "Ты Principal Software Engineer. Напиши ОДИН файл HTML/CSS/JS.")
-			siteURL := createGist(code)
-			
-			ad := "\n\n📢 *Создано в Empire! Наш канал: https://t.me/JarvisEmpireCode*"
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "✅ ПРОЕКТ ГОТОВ!"+ad)
-			msg.ParseMode = "Markdown"
-			
-			if siteURL != "" {
-				btnJSON := fmt.Sprintf(`{"inline_keyboard":[[{"text":"🌐 ОТКРЫТЬ (TWA)","web_app":{"url":"%s"}}]]}`, siteURL)
-				var markup tgbotapi.InlineKeyboardMarkup
-				json.Unmarshal([]byte(btnJSON), &markup)
-				msg.ReplyMarkup = markup
-			}
-			botR.Send(msg)
-		}
+			ans := askUltimateAI(m.Text, "Ты — мощный ИИ-помощник.")
+			msg := tgbotapi.NewMessage(m.Chat.ID, ans)
+			msg.ReplyToMessageID = m.MessageID // Ответ на конкретное сообщение
+			bot.Send(msg)
+		}(update.Message)
 	}
 }
