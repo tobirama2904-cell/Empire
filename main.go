@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -13,7 +12,7 @@ import (
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// Структуры для общения с нейросетями
+// Структуры для API
 type AIRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
@@ -23,41 +22,38 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-// Провайдеры ИИ (правильные адреса)
 const (
 	GH_URL   = "https://azure.com"
 	GROQ_URL = "https://groq.com"
 )
 
-// Функция автоматического выбора живого ИИ
+// Функция выбора живого ИИ (Автоматизация смены ключей)
 func askUltimateAI(prompt, sys string) string {
-	// Собираем все ключи из настроек сервера
 	ghTokens := strings.Split(os.Getenv("GITHUB_TOKENS"), ",")
 	groqKey := os.Getenv("GROQ_KEY")
 
-	// 1. Пробуем GitHub (перебираем все токены, если их много)
+	// 1. Пробуем GitHub (перебор всех твоих токенов)
 	for _, token := range ghTokens {
 		token = strings.TrimSpace(token)
 		if token == "" { continue }
 		
-		// Список бесплатных моделей на GitHub
 		models := []string{"gpt-4o", "meta-llama-3.1-70b", "mistral-large-2407"}
 		for _, m := range models {
 			res := callAPI(GH_URL, token, m, sys, prompt)
-			if res != "" { return res } // Если ответил — возвращаем результат
+			if res != "" { return res }
 		}
 	}
 
-	// 2. Если GitHub не ответил, пробуем Groq (самый быстрый)
+	// 2. Резервный Groq (если GitHub не алё)
 	if groqKey != "" {
 		res := callAPI(GROQ_URL, groqKey, "llama-3.1-70b-versatile", sys, prompt)
 		if res != "" { return res }
 	}
 
-	return "🚀 Все линии связи заняты. Попробуй через минуту!"
+	return "🚀 *Все ИИ линии перегружены.* Попробуй через минуту!"
 }
 
-// Универсальный вызов API
+// Запрос к нейросети
 func callAPI(apiURL, key, model, sys, prompt string) string {
 	payload := AIRequest{
 		Model: model,
@@ -75,7 +71,6 @@ func callAPI(apiURL, key, model, sys, prompt string) string {
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	
-	// Если ошибка (лимит, неверный ключ и т.д.), возвращаем пусто
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return "" 
 	}
@@ -96,10 +91,9 @@ func callAPI(apiURL, key, model, sys, prompt string) string {
 }
 
 func main() {
-	// Берем токен Телеграм из настроек
 	botToken := os.Getenv("TELEGRAM_APITOKEN")
 	if botToken == "" {
-		log.Panic("Ошибка: Не указан TELEGRAM_APITOKEN")
+		log.Panic("ОШИБКА: Забудь запустить переменную TELEGRAM_APITOKEN!")
 	}
 
 	bot, err := tgbotapi.NewBotAPI(botToken)
@@ -107,7 +101,7 @@ func main() {
 		log.Panic(err)
 	}
 
-	log.Printf("Бот запущен под аккаунтом %s", bot.Self.UserName)
+	log.Printf("Бот успешно запущен: %s", bot.Self.UserName)
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -116,14 +110,18 @@ func main() {
 	for update := range updates {
 		if update.Message == nil { continue }
 		
-		// Отвечаем в отдельном потоке (горутине), чтобы бот не тормозил
 		go func(m *tgbotapi.Message) {
-			// Отправляем статус "печатает..."
-			bot.Send(tgbotapi.NewChatAction(m.Chat.ID, tgbotapi.ChatActionTyping))
+			// Показываем, что бот "думает"
+			bot.Send(tgbotapi.NewChatAction(m.Chat.ID, "typing"))
 			
-			ans := askUltimateAI(m.Text, "Ты — мощный ИИ-помощник.")
+			log.Printf("[%s] спросил: %s", m.From.UserName, m.Text)
+			
+			ans := askUltimateAI(m.Text, "Ты — мощный ИИ-помощник. Отвечай четко.")
+			
 			msg := tgbotapi.NewMessage(m.Chat.ID, ans)
-			msg.ReplyToMessageID = m.MessageID // Ответ на конкретное сообщение
+			msg.ReplyToMessageID = m.MessageID
+			msg.ParseMode = "Markdown" // Делает текст красивым
+			
 			bot.Send(msg)
 		}(update.Message)
 	}
